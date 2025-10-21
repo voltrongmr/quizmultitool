@@ -171,6 +171,76 @@ javascript:(()=>{
     .${TOOL_IDS.CORRECT_ANSWER} .answer-body * {
       color: #198754 !important;
     }
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    }
+    .modal-header {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #fff;
+    }
+    .modal-body {
+      margin-bottom: 20px;
+    }
+    .modal-entries {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--glass);
+    }
+    .modal-entry {
+      padding: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 13px;
+    }
+    .modal-entry:last-child {
+      border-bottom: none;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+    .modal-btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .modal-btn-cancel {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .modal-btn-delete {
+      background: linear-gradient(180deg,var(--danger), #c02616);
+      color: #fff;
+    }
   `;
 
   // Add styles to document
@@ -242,6 +312,15 @@ javascript:(()=>{
         <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
           <input data-delete-before type="checkbox" />
           <label style="margin:0">Delete existing with same name</label>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <input data-bloat type="checkbox" />
+          <label style="margin:0">Injection Bloat</label>
+          <div data-bloat-controls style="display:none;align-items:center;gap:8px">
+            <input data-bloat-count type="number" min="1" value="10" style="width:80px" />
+            <label style="margin:0">entries</label>
+          </div>
         </div>
 
         <div class="controls">
@@ -550,7 +629,14 @@ javascript:(()=>{
         return (a.duration || 0) - (b.duration || 0);
       });
 
-      let html = '<table>';
+      let html = '';
+      if (matches.length > 1) {
+        html += '<div style="margin-bottom:8px;padding:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px">';
+        const scoreIds = matches.map(m => m.id);
+        html += `<button class="btn-danger" onclick="window.__deleteAllScores('${scoreIds.join(',')}')" style="padding:6px 12px;font-size:12px">Delete All ${matches.length} Entries</button>`;
+        html += '</div>';
+      }
+      html += '<table>';
       html += '<tr><th>Name</th><th>Score</th><th>Time</th><th>Units</th><th></th></tr>';
 
       matches.forEach(doc => {
@@ -613,6 +699,139 @@ javascript:(()=>{
     }
   };
 
+  // Modal functions
+  function createModal(title, content, actions) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">${title}</div>
+        <div class="modal-body">${content}</div>
+        <div class="modal-actions">${actions}</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function closeModal(overlay) {
+    if (overlay && overlay.parentNode) {
+      overlay.parentNode.removeChild(overlay);
+    }
+  }
+
+  // Global handler for bulk deleting scores with modal confirmation
+  window.__deleteAllScores = async (scoreIdsString) => {
+    // Convert comma-separated string to array
+    const scoreIds = scoreIdsString.split(',');
+    // Get the score data for display
+    const scoresToDelete = cachedScores.filter(score => scoreIds.includes(score.id));
+    
+    // Create entries list HTML
+    const entriesHtml = scoresToDelete.map(score => {
+      const scoreText = (score.correct || 0) + '/' + (score.total || 0);
+      const accuracy = score.accuracy ? ' (' + score.accuracy.toFixed(1) + '%)' : '';
+      const rawSeconds = Math.max(0, parseInt(score.duration) || 0);
+      let timeStr;
+      if (rawSeconds >= 60) {
+        const mins = Math.floor(rawSeconds / 60);
+        const secs = rawSeconds % 60;
+        timeStr = secs > 0 ? mins + 'm ' + secs + 's' : mins + 'm';
+      } else {
+        timeStr = rawSeconds + 's';
+      }
+      return '<div class="modal-entry" style="color: #ef4444;"><strong>' + (score.userName || 'Unknown') + '</strong> - ' + scoreText + accuracy + ' - ' + timeStr + '</div>';
+    }).join('');
+
+    const modalContent = `
+      <p style="margin-bottom: 12px; color: var(--muted)">Are you sure you want to delete these entries?</p>
+      <div class="modal-entries">
+        ${entriesHtml}
+      </div>
+    `;
+
+    const actions = `
+      <button class="modal-btn modal-btn-cancel" data-cancel>Cancel</button>
+      <button class="modal-btn modal-btn-delete" data-delete>Delete</button>
+    `;
+
+    const modal = createModal('Delete All Entries', modalContent, actions);
+    
+    // Add event listeners
+    modal.querySelector('[data-cancel]').addEventListener('click', () => {
+      closeModal(modal);
+    });
+
+    modal.querySelector('[data-delete]').addEventListener('click', async () => {
+      closeModal(modal);
+      
+      // Show second confirmation modal
+      const secondModalContent = '<p style="color: var(--danger); font-weight: 600;">You are about to delete ' + scoreIds.length + ' entries. Continue?</p>';
+      
+      const secondActions = '<button class="modal-btn modal-btn-cancel" data-cancel>Cancel</button><button class="modal-btn modal-btn-delete" data-confirm-delete>Continue</button>';
+      
+      const secondModal = createModal('Final Confirmation', secondModalContent, secondActions);
+      
+      secondModal.querySelector('[data-cancel]').addEventListener('click', () => {
+        closeModal(secondModal);
+      });
+
+      secondModal.querySelector('[data-confirm-delete]').addEventListener('click', async () => {
+        closeModal(secondModal);
+        
+        try {
+          setStatus(`Deleting ${scoreIds.length} entries one by one...`);
+          
+          let deletedCount = 0;
+          let errorCount = 0;
+          
+          // Delete one at a time with a small delay to avoid rate limiting
+          for (let i = 0; i < scoreIds.length; i++) {
+            try {
+              await db.collection('quiz_scores').doc(scoreIds[i]).delete();
+              deletedCount++;
+              
+              // Update cache immediately
+              cachedScores = cachedScores.filter(d => d.id !== scoreIds[i]);
+              
+              // Update status every 10 deletions or on the last item
+              if (deletedCount % 10 === 0 || i === scoreIds.length - 1) {
+                setStatus(`Deleted ${deletedCount}/${scoreIds.length} entries...`);
+              }
+              
+              // Small delay to avoid overwhelming Firestore
+              if (i < scoreIds.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+              }
+            } catch (error) {
+              console.error(`Error deleting score ${scoreIds[i]}:`, error);
+              errorCount++;
+            }
+          }
+          
+          // Refresh search results
+          doSearch();
+          
+          if (errorCount > 0) {
+            setStatus(`Deleted ${deletedCount} entries, ${errorCount} errors occurred`);
+          } else {
+            setStatus(`Successfully deleted ${deletedCount} entries`);
+          }
+        } catch (e) {
+          console.error('Error in delete process:', e);
+          setStatus(`Error deleting scores: ${e.message}`);
+        }
+      });
+    });
+
+    // Close modal when clicking outside
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal(modal);
+      }
+    });
+  };
+
   // Score Injection Functions
   async function submitScore() {
     // Get and validate values
@@ -620,6 +839,8 @@ javascript:(()=>{
     const total = parseInt($('[data-total]').value) || 0;
     const duration = parseInt($('[data-duration]').value) || 0;
     const units = parseInt($('[data-units]').value) || 0;
+    const isBloatEnabled = $('[data-bloat]').checked;
+    const bloatCount = Math.max(1, parseInt($('[data-bloat-count]').value) || 1);
 
     // Validation
     if (!$('[data-name]').value.trim()) {
@@ -671,11 +892,33 @@ javascript:(()=>{
         }
       }
       
-      // Add new score
-      const docRef = await db.collection('quiz_scores').add(data);
-      console.log('Score added with ID:', docRef.id);
+      // Add new scores (handle bloat injection)
+      if (isBloatEnabled) {
+        const batch = db.batch();
+        const batchSize = Math.min(500, bloatCount); // Firestore batch limit is 500
+        
+        setStatus(`Injecting ${batchSize} scores...`);
+        
+        for (let i = 0; i < batchSize; i++) {
+          const docRef = db.collection('quiz_scores').doc();
+          const bloatData = {
+            ...data,
+            timestamp: firebase.firestore.Timestamp.fromDate(
+              new Date(data.timestamp.toDate().getTime() + (i * 1000))
+            )
+          };
+          batch.set(docRef, bloatData);
+        }
+        
+        await batch.commit();
+        console.log(`${batchSize} scores added via bloat injection`);
+      } else {
+        // Add single score
+        const docRef = await db.collection('quiz_scores').add(data);
+        console.log('Score added with ID:', docRef.id);
+      }
       
-      // Clear the cache so the new score shows up in searches
+      // Clear the cache so the new scores show up in searches
       cachedScores = null;
       
       // Reset form fields
@@ -785,6 +1028,12 @@ javascript:(()=>{
   $('[data-score-delete]').addEventListener('click', () => deleteScoresByName());
   $('[data-score-top]').addEventListener('click', showTopScores);
   
+  // Toggle bloat controls visibility
+  $('[data-bloat]').addEventListener('change', (e) => {
+    const controls = $('[data-bloat-controls]');
+    controls.style.display = e.target.checked ? 'flex' : 'none';
+  });
+  
   // Real-time search as user types
   $('[data-search-name]').addEventListener('input', (e) => {
     if (searchTimer) {
@@ -822,6 +1071,7 @@ javascript:(()=>{
     document.getElementById(TOOL_IDS.STYLE)?.remove();
     delete window.__combinedToolStop__;
     delete window.__deleteScore;
+    delete window.__deleteAllScores;
   });
 
   // Expose stop function globally
